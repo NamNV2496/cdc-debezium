@@ -1,0 +1,125 @@
+
+version: '3.8'
+
+services:
+  # PostgreSQL service
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: debezium_user
+      POSTGRES_PASSWORD: debezium_pass
+      POSTGRES_DB: debezium_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./data/postgres_data:/var/lib/postgresql/data
+      - ./SQL/create.sql:/docker-entrypoint-initdb.d/init.sql
+    command: [ "postgres", "-c", "wal_level=logical" ]
+     
+
+  # Kafka service
+  zookeeper:
+    image: "bitnami/zookeeper:3.8.4-debian-12-r8"
+    ports:
+      - "2181:2181"
+    environment:
+      - ALLOW_ANONYMOUS_LOGIN=yes
+
+  kafka:
+    image: "bitnami/kafka:3.7.1-debian-12-r0"
+    depends_on:
+      - zookeeper
+    environment:
+      KAFKA_BROKER_ID: 2
+      KAFKA_CFG_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_CFG_LISTENERS: INTERNAL://:9092,EXTERNAL://0.0.0.0:29092
+      KAFKA_CFG_ADVERTISED_LISTENERS: INTERNAL://kafka:9092,EXTERNAL://localhost:29092
+      KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_CFG_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_CFG_AUTO_CREATE_TOPICS_ENABLE: 'true'
+      ALLOW_PLAINTEXT_LISTENER: 'yes'
+    ports:
+      - "9092:9092"
+      - "29092:29092"
+    volumes:
+      - kafka_data:/var/lib/kafka
+
+  # Debezium Connect service
+  debezium:
+    image: debezium/connect:3.0.0.Final
+    ports:
+      - "8083:8083"
+    environment:
+      BOOTSTRAP_SERVERS: "kafka:9092"
+      GROUP_ID: "1"
+      CONFIG_STORAGE_TOPIC: "connect_configs"
+      OFFSET_STORAGE_TOPIC: "connect_offsets"
+      STATUS_STORAGE_TOPIC: "connect_statuses"
+      CONNECT_KEY_CONVERTER_SCHEMAS_ENABLE: "false"
+      CONNECT_VALUE_CONVERTER_SCHEMAS_ENABLE: "false"
+      CONNECT_KEY_CONVERTER: "org.apache.kafka.connect.json.JsonConverter"
+      CONNECT_VALUE_CONVERTER: "org.apache.kafka.connect.json.JsonConverter"
+      CONNECT_DATABASE_HISTORY: "io.debezium.relational.history.KafkaDatabaseHistory"
+      CONNECT_DATABASE_HISTORY_KAFKA_TOPIC: "dbhistory.debezium"
+      CONNECTOR_PLUGINS_DIR: "/kafka/connect"
+      CONFIG_STORAGE_REPLICATION_FACTOR: "1"
+      STATUS_STORAGE_REPLICATION_FACTOR: "1"
+      REST_ADVERTISED_HOST_NAME: "medium_debezium"
+
+  # Debezium UI service
+  debezium-ui:
+    image: debezium/debezium-ui:latest
+    ports:
+      - "8080:8080"
+    environment:
+      KAFKA_CONNECT_URIS: "http://debezium:8083"
+    depends_on:
+      - debezium
+    platform: linux/amd64
+
+  # minio:
+  #   image: minio/minio
+  #   ports:
+  #     - "9000:9000"
+  #     - "9001:9001"
+  #   volumes:
+  #     - 'minio_data:/data'
+  #   environment:
+  #     MINIO_ROOT_USER: root
+  #     MINIO_ROOT_PASSWORD: rootroot
+  #     MINIO_DEFAULT_BUCKETS: ulogs
+  #   command: server --console-address ":9001" /data
+      
+  kafka-ui:
+    container_name: kafka-ui
+    image: provectuslabs/kafka-ui:latest
+    ports:
+      - 9090:8080
+    depends_on:
+      kafka:
+        condition: service_started
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+      DYNAMIC_CONFIG_ENABLED: "true"
+
+  # nifi:
+  #   image: apache/nifi:latest
+  #   ports:
+  #     - "8081:8081"
+  #   environment:
+  #     - NIFI_WEB_HTTP_PORT=8081
+  #     - ./nifi/database_repository:/opt/nifi/nifi-current/database_repository
+  #     - ./nifi/flowfile_repository:/opt/nifi/nifi-current/flowfile_repository
+  #     - ./nifi/content_repository:/opt/nifi/nifi-current/content_repository
+  #     - ./nifi/provenance_repository:/opt/nifi/nifi-current/provenance_repository
+  #     - ./nifi/python_extensions:/opt/nifi/nifi-current/python_extensions
+  #     - ./nifi/state:/opt/nifi/nifi-current/state
+  #     - ./nifi/logs:/opt/nifi/nifi-current/logs
+  
+volumes:
+  postgres_data:
+  kafka_data:
+  clickhouse_data:
+  minio_data:
+    driver: local
